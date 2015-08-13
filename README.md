@@ -1,0 +1,2 @@
+# beacon
+Random Number Beacon
