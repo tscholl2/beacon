@@ -8,9 +8,9 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"hash"
 	"os"
-	"sync"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3" //allows 'sqlite' driver in std sqldb lib
@@ -25,7 +25,6 @@ type RDB struct {
 	latestStmt *sql.Stmt
 	afterStmt  *sql.Stmt
 	beforeStmt *sql.Stmt
-	mutex      *sync.Mutex
 }
 
 //Record is an object to keep track
@@ -101,27 +100,22 @@ func Open(filename string, key string) (rdb RDB, err error) {
 	}
 	// check if database file exists, otherwise make one
 	if filename != ":memory:" {
-		if _, err = os.Stat(filename); err != nil {
-			if os.IsNotExist(err) {
-				var f *os.File
-				var newDB *sql.DB
-				f, err = os.Create(filename)
-				if err != nil {
-					return
-				}
-				f.Close()
-
-				newDB, err = sql.Open("sqlite3", filename)
-				if err != nil {
-					return
-				}
-				err = newDB.Close()
-				if err != nil {
-					return
-				}
+		if _, err = os.Stat(filename); err != nil && os.IsNotExist(err) {
+			var f *os.File
+			var newDB *sql.DB
+			f, err = os.Create(filename)
+			if err != nil {
+				return
 			}
-		} else {
-			return
+			f.Close()
+			newDB, err = sql.Open("sqlite3", filename)
+			if err != nil {
+				return
+			}
+			err = newDB.Close()
+			if err != nil {
+				return
+			}
 		}
 	}
 	// open database
@@ -163,13 +157,15 @@ signature BLOB NOT NULL
 	if err != nil {
 		return
 	}
-	rdb.mutex = new(sync.Mutex)
 	return
 }
 
 //Close destroys the database connection. Future
 //attempts to use this will result in an error.
 func (rdb RDB) Close() error {
+	if rdb.db == nil {
+		return errors.New("Connection already closed.")
+	}
 	return rdb.db.Close()
 }
 
@@ -200,15 +196,9 @@ func (rdb RDB) Latest() (r Record, err error) {
 	return
 }
 
-func copyInto(arr []byte, arr2 []byte) {
-	return
-}
-
 //New generates and returns a new record and saves
 //it in the database.
 func (rdb RDB) New() (r Record, err error) {
-	rdb.mutex.Lock()
-	defer rdb.mutex.Unlock()
 	//fill in new bits
 	r.Bits = make([]byte, 64)
 	rand.Read(r.Bits)
@@ -233,11 +223,34 @@ func (rdb RDB) New() (r Record, err error) {
 	if err != nil {
 		return
 	}
-	result, err := rdb.insertStmt.Exec(r.Bits, r.Time, r.Hash, r.Signature)
+	//make an attempt to insert
+	//note in order for hash's to be
+	//consistent the inserts have to be
+	//sequential. Hence the need for the
+	//transaction and rollback if it fails
+	//to insert the next value.
+	tx, err := rdb.db.Begin()
+	if err != nil {
+		return
+	}
+	result, err := tx.Stmt(rdb.insertStmt).Exec(r.Bits, r.Time, r.Hash, r.Signature)
 	if err != nil {
 		return
 	}
 	id, err := result.LastInsertId()
+	if err != nil {
+		tx.Rollback()
+		return
+	}
 	r.ID = id
+	if id != r0.ID+1 {
+		err = tx.Rollback()
+		if err != nil {
+			return
+		}
+		err = errors.New("Detected race when trying to insert.")
+		return
+	}
+	err = tx.Commit()
 	return
 }

@@ -10,12 +10,33 @@ func TestInitialize(t *testing.T) {
 	fn := ".hiddentestingdatabasefile"
 	rdb, err := Open(fn, "secret")
 	if err != nil {
-		t.Errorf("Err initializing:\n\t%s", err)
+		t.Errorf("Err initializing1:\n\t%s", err)
+	}
+	_, err = rdb.New()
+	if err != nil {
+		t.Errorf("Err inserting new:\n\t%s", err)
 	}
 	err = rdb.Close()
 	if err != nil {
-		t.Errorf("Err closing rdb:\n\t%s", err)
+		t.Errorf("Err closing rdb1:\n\t%s", err)
 	}
+	//open again to make sure it worked and saved
+	rdb, err = Open(fn, "secret")
+	if err != nil {
+		t.Errorf("Err initializing2:\n\t%s", err)
+	}
+	r, err := rdb.Latest()
+	if err != nil {
+		t.Errorf("Err reading value:\n\t%s", err)
+	}
+	if r.ID != 1 {
+		t.Errorf("Err reading value: record not 1")
+	}
+	err = rdb.Close()
+	if err != nil {
+		t.Errorf("Err closing rdb2:\n\t%s", err)
+	}
+	//clean up
 	err = os.Remove(fn)
 	if err != nil {
 		t.Errorf("Err removing database file, please remove './%s' manually.", fn)
