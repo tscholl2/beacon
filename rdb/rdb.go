@@ -4,9 +4,10 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/sha512"
 	"database/sql"
-	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"hash"
@@ -48,10 +49,10 @@ func (r Record) MarshalJSON() ([]byte, error) {
 		Signature string `json:"signature"`
 	}{
 		r.ID,
-		base64.StdEncoding.EncodeToString(r.Bits),
+		hex.EncodeToString(r.Bits),
 		r.Time,
-		base64.StdEncoding.EncodeToString(r.Hash),
-		base64.StdEncoding.EncodeToString(r.Signature),
+		hex.EncodeToString(r.Hash),
+		hex.EncodeToString(r.Signature),
 	})
 }
 
@@ -203,23 +204,24 @@ func (rdb RDB) New() (r Record, err error) {
 	r.Bits = make([]byte, 64)
 	rand.Read(r.Bits)
 	//find previous record and hash it's value
+	//plus the value of the new bits
 	var r0 Record
 	r0, err = rdb.Latest()
-	var prev [64]byte
-	r.Hash = make([]byte, 64)
+	var s [32]byte
 	if err == sql.ErrNoRows {
-		prev = sha512.Sum512(r.Bits)
+		s = sha256.Sum256([]byte(hex.EncodeToString(r.Bits)))
 	} else {
-		prev = sha512.Sum512(r0.Bits)
+		s = sha256.Sum256([]byte(hex.EncodeToString(r0.Hash) +
+			hex.EncodeToString(r.Bits)))
 	}
-	for i := 0; i < len(prev); i++ {
-		r.Hash[i] = prev[i]
+	r.Hash = make([]byte, 32)
+	for i := 0; i < len(s); i++ {
+		r.Hash[i] = s[i]
 	}
 	//note the time
 	r.Time = time.Now().Unix()
 	//sign the generated bits and hash
-	data := append(r.Bits, r.Hash...)
-	r.Signature, err = rdb.key.Sign(rand.Reader, data, nil)
+	r.Signature, err = rdb.key.Sign(rand.Reader, append(r.Bits, r.Hash...), nil)
 	if err != nil {
 		return
 	}
