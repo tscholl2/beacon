@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"hash"
+	"io"
 	"os"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 //RDB is the main database interface.
 type RDB struct {
 	key        *ecdsa.PrivateKey
+	Reader     io.Reader
 	db         *sql.DB
 	insertStmt *sql.Stmt
 	selectStmt *sql.Stmt
@@ -91,7 +93,10 @@ func (s *stupidReader) Read(p []byte) (n int, err error) {
 
 //Open sets up a database at the given file location
 //or continues using one that is there if it exists.
-func Open(filename string, key string) (rdb RDB, err error) {
+//key is the private key to generate something to sign with
+//and rand is the source of randomness for the bytes.
+func Open(filename string, key string, rand io.Reader) (rdb RDB, err error) {
+	rdb.Reader = rand
 
 	//#TODO think of a better way to hash from a key to a curve
 	//maybe also use custom curve generator?
@@ -99,6 +104,7 @@ func Open(filename string, key string) (rdb RDB, err error) {
 	if err != nil {
 		return
 	}
+
 	// check if database file exists, otherwise make one
 	if filename != ":memory:" {
 		if _, err = os.Stat(filename); err != nil && os.IsNotExist(err) {
@@ -202,7 +208,7 @@ func (rdb RDB) Latest() (r Record, err error) {
 func (rdb RDB) New() (r Record, err error) {
 	//fill in new bits
 	r.Bits = make([]byte, 64)
-	rand.Read(r.Bits)
+	rdb.Reader.Read(r.Bits)
 	//find previous record and hash it's value
 	//plus the value of the new bits
 	var r0 Record
@@ -221,6 +227,7 @@ func (rdb RDB) New() (r Record, err error) {
 	//note the time
 	r.Time = time.Now().Unix()
 	//sign the generated bits and hash
+	//#TODO should this use rdb.Reader?
 	r.Signature, err = rdb.key.Sign(rand.Reader, append(r.Bits, r.Hash...), nil)
 	if err != nil {
 		return

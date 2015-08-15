@@ -1,12 +1,14 @@
 package main
 
 import (
+	"crypto/sha512"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/cocoonlife/goalsa"
 	"github.com/tscholl2/beacon/rdb"
 	"github.com/zenazn/goji"
 	"github.com/zenazn/goji/web"
@@ -17,17 +19,48 @@ var (
 	records rdb.RDB
 )
 
+type mic struct{}
+
+func min(a int, b int) int {
+	if a <= b {
+		return a
+	}
+	return b
+}
+
+func (*mic) Read(p []byte) (n int, err error) {
+	dev, err := alsa.NewCaptureDevice("default", 1, alsa.FormatU8, 8000, alsa.BufferParams{})
+	if err != nil {
+		return
+	}
+	b1 := make([]int8, 8000)
+	_, err = dev.Read(b1)
+	if err != nil {
+		return
+	}
+	b2 := make([]byte, len(b1))
+	for i := 0; i < len(b1); i++ {
+		b2[i] = byte(b1[i])
+	}
+	dev.Close()
+	c := sha512.Sum512(b2)
+	for n = 0; n < min(len(b1), len(p)); n++ {
+		p[n] = c[n]
+	}
+	return
+}
+
 func init() {
 	//#TODO read in key from file
 	var err error
-	records, err = rdb.Open("./test.db", "key")
+	records, err = rdb.Open("./test.db", "key", new(mic))
 	if err != nil {
 		panic(err)
 	}
 	go func() {
 		for {
 			records.New()
-			time.Sleep(60 * time.Second)
+			time.Sleep(10 * time.Second)
 		}
 	}()
 }

@@ -1,6 +1,7 @@
 package rdb
 
 import (
+	"crypto/rand"
 	"os"
 	"testing"
 	"time"
@@ -8,7 +9,7 @@ import (
 
 func TestInitialize(t *testing.T) {
 	fn := ".hiddentestingdatabasefile"
-	rdb, err := Open(fn, "secret")
+	rdb, err := Open(fn, "secret", rand.Reader)
 	if err != nil {
 		t.Errorf("Err initializing1:\n\t%s", err)
 	}
@@ -21,7 +22,7 @@ func TestInitialize(t *testing.T) {
 		t.Errorf("Err closing rdb1:\n\t%s", err)
 	}
 	//open again to make sure it worked and saved
-	rdb, err = Open(fn, "secret")
+	rdb, err = Open(fn, "secret", rand.Reader)
 	if err != nil {
 		t.Errorf("Err initializing2:\n\t%s", err)
 	}
@@ -44,7 +45,7 @@ func TestInitialize(t *testing.T) {
 }
 
 func TestOpen(t *testing.T) {
-	rdb, err := Open(":memory:", "secret")
+	rdb, err := Open(":memory:", "secret", rand.Reader)
 	if err != nil {
 		t.Errorf("Err initializing:\n\t%s", err)
 	}
@@ -58,7 +59,7 @@ func TestOpen(t *testing.T) {
 }
 
 func TestSelects(t *testing.T) {
-	rdb, err := Open(":memory:", "secret")
+	rdb, err := Open(":memory:", "secret", rand.Reader)
 	if err != nil {
 		t.Errorf("Err initializing:\n\t%s", err)
 	}
