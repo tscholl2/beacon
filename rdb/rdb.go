@@ -1,16 +1,14 @@
 package rdb
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
+	"crypto"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/sha512"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"hash"
 	"io"
 	"os"
 	"time"
@@ -20,8 +18,8 @@ import (
 
 //RDB is the main database interface.
 type RDB struct {
-	key        *ecdsa.PrivateKey
-	Reader     io.Reader
+	signer     crypto.Signer
+	reader     io.Reader
 	db         *sql.DB
 	insertStmt *sql.Stmt
 	selectStmt *sql.Stmt
@@ -51,10 +49,10 @@ func (r Record) MarshalJSON() ([]byte, error) {
 		Signature string `json:"signature"`
 	}{
 		r.ID,
-		hex.EncodeToString(r.Bits),
+		base64.StdEncoding.EncodeToString(r.Bits),
 		r.Time,
-		hex.EncodeToString(r.Hash),
-		hex.EncodeToString(r.Signature),
+		base64.StdEncoding.EncodeToString(r.Hash),
+		base64.StdEncoding.EncodeToString(r.Signature),
 	})
 }
 
@@ -64,47 +62,13 @@ func (r Record) Equals(r2 Record) bool {
 	return r.ID == r2.ID
 }
 
-type stupidReader struct {
-	i int
-	h hash.Hash
-	a []byte
-}
-
-func newStupidReader(key string) *stupidReader {
-	var s stupidReader
-	s.h = sha512.New()
-	s.h.Write([]byte(key))
-	s.a = s.h.Sum([]byte{})
-	return &s
-}
-
-func (s *stupidReader) Read(p []byte) (n int, err error) {
-	for i := 0; i < len(p); i++ {
-		p[i] = s.a[s.i]
-		s.i = s.i + 1
-		if s.i == len(s.a) {
-			s.i = 0
-			s.h.Write(s.a)
-			s.a = s.h.Sum([]byte{})
-		}
-	}
-	return len(p), nil
-}
-
 //Open sets up a database at the given file location
 //or continues using one that is there if it exists.
-//key is the private key to generate something to sign with
+//signature is the private key to sign with
 //and rand is the source of randomness for the bytes.
-func Open(filename string, key string, rand io.Reader) (rdb RDB, err error) {
-	rdb.Reader = rand
-
-	//#TODO think of a better way to hash from a key to a curve
-	//maybe also use custom curve generator?
-	rdb.key, err = ecdsa.GenerateKey(elliptic.P256(), newStupidReader(key))
-	if err != nil {
-		return
-	}
-
+func Open(filename string, signature crypto.Signer, rand io.Reader) (rdb RDB, err error) {
+	rdb.reader = rand
+	rdb.signer = signature
 	// check if database file exists, otherwise make one
 	if filename != ":memory:" {
 		if _, err = os.Stat(filename); err != nil && os.IsNotExist(err) {
@@ -208,16 +172,23 @@ func (rdb RDB) Latest() (r Record, err error) {
 func (rdb RDB) New() (r Record, err error) {
 	//fill in new bits
 	r.Bits = make([]byte, 64)
-	rdb.Reader.Read(r.Bits)
+	n, err := io.ReadFull(rdb.reader, r.Bits)
+	if err != nil {
+		return
+	}
+	if n < 64 {
+		err = errors.New("Unable to fill up random bits.")
+		return
+	}
 	//find previous record and hash it's value
 	//plus the value of the new bits
 	var r0 Record
 	r0, err = rdb.Latest()
 	var s [32]byte
 	if err == sql.ErrNoRows {
-		s = sha256.Sum256([]byte(hex.EncodeToString(r.Bits)))
+		s = sha256.Sum256([]byte(base64.StdEncoding.EncodeToString(r.Bits)))
 	} else {
-		s = sha256.Sum256([]byte(hex.EncodeToString(r0.Hash) +
+		s = sha256.Sum256([]byte(base64.StdEncoding.EncodeToString(r0.Hash) +
 			hex.EncodeToString(r.Bits)))
 	}
 	r.Hash = make([]byte, 32)
@@ -228,7 +199,7 @@ func (rdb RDB) New() (r Record, err error) {
 	r.Time = time.Now().Unix()
 	//sign the generated bits and hash
 	//#TODO should this use rdb.Reader?
-	r.Signature, err = rdb.key.Sign(rand.Reader, append(r.Bits, r.Hash...), nil)
+	r.Signature, err = rdb.signer.Sign(rand.Reader, append(r.Bits, r.Hash...), nil)
 	if err != nil {
 		return
 	}

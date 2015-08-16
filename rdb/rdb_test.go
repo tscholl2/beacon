@@ -1,15 +1,57 @@
 package rdb
 
 import (
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha512"
+	"hash"
 	"os"
 	"testing"
 	"time"
 )
 
+var (
+	testingKey crypto.PrivateKey
+)
+
+type stupidReader struct {
+	i int
+	h hash.Hash
+	a []byte
+}
+
+func newStupidReader(key string) *stupidReader {
+	var s stupidReader
+	s.h = sha512.New()
+	s.h.Write([]byte(key))
+	s.a = s.h.Sum([]byte{})
+	return &s
+}
+func (s *stupidReader) Read(p []byte) (n int, err error) {
+	for i := 0; i < len(p); i++ {
+		p[i] = s.a[s.i]
+		s.i = s.i + 1
+		if s.i == len(s.a) {
+			s.i = 0
+			s.h.Write(s.a)
+			s.a = s.h.Sum([]byte{})
+		}
+	}
+	return len(p), nil
+}
+
+func init() {
+	testingKey, err := ecdsa.GenerateKey(elliptic.P256(), newStupidReader("secret"))
+	if err != nil {
+		panic(err)
+	}
+}
+
 func TestInitialize(t *testing.T) {
 	fn := ".hiddentestingdatabasefile"
-	rdb, err := Open(fn, "secret", rand.Reader)
+	rdb, err := Open(fn, testingKey, rand.Reader)
 	if err != nil {
 		t.Errorf("Err initializing1:\n\t%s", err)
 	}
@@ -22,7 +64,7 @@ func TestInitialize(t *testing.T) {
 		t.Errorf("Err closing rdb1:\n\t%s", err)
 	}
 	//open again to make sure it worked and saved
-	rdb, err = Open(fn, "secret", rand.Reader)
+	rdb, err = Open(fn, testingKey, rand.Reader)
 	if err != nil {
 		t.Errorf("Err initializing2:\n\t%s", err)
 	}
@@ -45,7 +87,7 @@ func TestInitialize(t *testing.T) {
 }
 
 func TestOpen(t *testing.T) {
-	rdb, err := Open(":memory:", "secret", rand.Reader)
+	rdb, err := Open(":memory:", testingKey, rand.Reader)
 	if err != nil {
 		t.Errorf("Err initializing:\n\t%s", err)
 	}
@@ -59,7 +101,7 @@ func TestOpen(t *testing.T) {
 }
 
 func TestSelects(t *testing.T) {
-	rdb, err := Open(":memory:", "secret", rand.Reader)
+	rdb, err := Open(":memory:", testingKey, rand.Reader)
 	if err != nil {
 		t.Errorf("Err initializing:\n\t%s", err)
 	}

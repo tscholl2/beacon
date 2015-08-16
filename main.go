@@ -1,9 +1,12 @@
 package main
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/sha512"
 	"encoding/json"
 	"errors"
+	"hash"
 	"net/http"
 	"strconv"
 	"time"
@@ -17,6 +20,7 @@ import (
 
 var (
 	records rdb.RDB
+	key     ecdsa.PrivateKey
 )
 
 type mic struct{}
@@ -50,10 +54,41 @@ func (*mic) Read(p []byte) (n int, err error) {
 	return
 }
 
+type stupidReader struct {
+	i int
+	h hash.Hash
+	a []byte
+}
+
+func newStupidReader(key string) *stupidReader {
+	var s stupidReader
+	s.h = sha512.New()
+	s.h.Write([]byte(key))
+	s.a = s.h.Sum([]byte{})
+	return &s
+}
+func (s *stupidReader) Read(p []byte) (n int, err error) {
+	for i := 0; i < len(p); i++ {
+		p[i] = s.a[s.i]
+		s.i = s.i + 1
+		if s.i == len(s.a) {
+			s.i = 0
+			s.h.Write(s.a)
+			s.a = s.h.Sum([]byte{})
+		}
+	}
+	return len(p), nil
+}
+
 func init() {
 	//#TODO read in key from file
-	var err error
-	records, err = rdb.Open("./test.db", "key", new(mic))
+	//#TODO think of a better way to hash from a key to a curve
+	//maybe also use custom curve generator?
+	key, err := ecdsa.GenerateKey(elliptic.P256(), newStupidReader(key))
+	if err != nil {
+		panic(err)
+	}
+	records, err = rdb.Open("./test.db", key, new(mic))
 	if err != nil {
 		panic(err)
 	}
@@ -131,11 +166,25 @@ func getAfter(c web.C, w http.ResponseWriter, r *http.Request) {
 	return
 }
 
+func getKey(w http.ResponseWriter, r *http.Request) {
+	err, b := MarshalPKIXPublicKey(key.Public())
+	if err != nil {
+		send(rdb.Record{}, err, w)
+		return
+	}
+	b, _ := json.Marshal(struct {
+		K string `json:"key"`
+	}{string(b)})
+	w.Write(b)
+	return
+}
+
 func main() {
 	defer records.Close()           //#TODO this doesn't get run? how to handle exit?
 	goji.Abandon(middleware.Logger) //comment out to see log
 	goji.Use(headers)
 	goji.Get("/", getLatest)
+	goji.Get("/key", getKey)
 	goji.Get("/:id", getID)
 	goji.Get("/before/:time", getBefore)
 	goji.Get("/after/:time", getAfter)
