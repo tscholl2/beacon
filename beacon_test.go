@@ -1,57 +1,46 @@
-package rdb
+package beacon
 
 import (
-	"crypto"
 	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/sha512"
-	"hash"
+	"crypto/x509"
+	"encoding/base64"
 	"os"
 	"testing"
 	"time"
 )
 
 var (
-	testingKey crypto.PrivateKey
+	key *ecdsa.PrivateKey
+	//Sample key generated with
+	//http://play.golang.org/p/SYdIwEX5oj
+	encodedPublicKey  = `ME4wEAYHKoZIzj0CAQYFK4EEACEDOgAEFNgW4fuywiBcE2GrOAmcjydUCi/YZ1hhT066ReC2sEaPI+NCi7tAPYnJCM4tHQjfgqwPYMVjvMg=`
+	encodedPrivateKey = `MGgCAQEEHGVPTAPaVNX4YmbVyfTYW8FWJMpZCo2R9HChDH6gBwYFK4EEACGhPAM6AAQU2Bbh+7LCIFwTYas4CZyPJ1QKL9hnWGFPTrpF4LawRo8j40KLu0A9ickIzi0dCN+CrA9gxWO8yA==`
 )
 
-type stupidReader struct {
-	i int
-	h hash.Hash
-	a []byte
-}
-
-func newStupidReader(key string) *stupidReader {
-	var s stupidReader
-	s.h = sha512.New()
-	s.h.Write([]byte(key))
-	s.a = s.h.Sum([]byte{})
-	return &s
-}
-func (s *stupidReader) Read(p []byte) (n int, err error) {
-	for i := 0; i < len(p); i++ {
-		p[i] = s.a[s.i]
-		s.i = s.i + 1
-		if s.i == len(s.a) {
-			s.i = 0
-			s.h.Write(s.a)
-			s.a = s.h.Sum([]byte{})
-		}
-	}
-	return len(p), nil
-}
-
 func init() {
-	testingKey, err := ecdsa.GenerateKey(elliptic.P256(), newStupidReader("secret"))
+	b, _ := base64.StdEncoding.DecodeString(encodedPrivateKey)
+	key, _ = x509.ParseECPrivateKey(b)
+}
+
+func TestPublic(t *testing.T) {
+	rdb, err := Open(":memory:", key, rand.Reader)
 	if err != nil {
-		panic(err)
+		t.Errorf("Err initializing:\n\t%s", err)
+	}
+	defer rdb.Close()
+	if rdb.EncodedPublicKey != encodedPublicKey {
+		t.Errorf(
+			"Public key doesnt match. Want:\n%s\nGot:\n%s\n",
+			encodedPublicKey,
+			rdb.EncodedPublicKey,
+		)
 	}
 }
 
 func TestInitialize(t *testing.T) {
 	fn := ".hiddentestingdatabasefile"
-	rdb, err := Open(fn, testingKey, rand.Reader)
+	rdb, err := Open(fn, key, rand.Reader)
 	if err != nil {
 		t.Errorf("Err initializing1:\n\t%s", err)
 	}
@@ -64,7 +53,7 @@ func TestInitialize(t *testing.T) {
 		t.Errorf("Err closing rdb1:\n\t%s", err)
 	}
 	//open again to make sure it worked and saved
-	rdb, err = Open(fn, testingKey, rand.Reader)
+	rdb, err = Open(fn, key, rand.Reader)
 	if err != nil {
 		t.Errorf("Err initializing2:\n\t%s", err)
 	}
@@ -87,7 +76,7 @@ func TestInitialize(t *testing.T) {
 }
 
 func TestOpen(t *testing.T) {
-	rdb, err := Open(":memory:", testingKey, rand.Reader)
+	rdb, err := Open(":memory:", key, rand.Reader)
 	if err != nil {
 		t.Errorf("Err initializing:\n\t%s", err)
 	}
@@ -101,7 +90,7 @@ func TestOpen(t *testing.T) {
 }
 
 func TestSelects(t *testing.T) {
-	rdb, err := Open(":memory:", testingKey, rand.Reader)
+	rdb, err := Open(":memory:", key, rand.Reader)
 	if err != nil {
 		t.Errorf("Err initializing:\n\t%s", err)
 	}

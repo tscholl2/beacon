@@ -1,12 +1,12 @@
-package rdb
+package beacon
 
 import (
 	"crypto"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"database/sql"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -26,6 +26,10 @@ type RDB struct {
 	latestStmt *sql.Stmt
 	afterStmt  *sql.Stmt
 	beforeStmt *sql.Stmt
+	//EncodedPublicKey is the base64
+	//PKIX encoding the public key used
+	//to do the signing.
+	EncodedPublicKey string
 }
 
 //Record is an object to keep track
@@ -42,11 +46,11 @@ type Record struct {
 //for records.
 func (r Record) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		ID        int64  `json:"id"`
-		Bits      string `json:"bits"`
-		Time      int64  `json:"timestamp"`
-		Hash      string `json:"hash"`
-		Signature string `json:"signature"`
+		ID int64  `json:"id"`
+		B  string `json:"bits"`
+		T  int64  `json:"timestamp"`
+		H  string `json:"hash"`
+		S  string `json:"signature"`
 	}{
 		r.ID,
 		base64.StdEncoding.EncodeToString(r.Bits),
@@ -66,9 +70,11 @@ func (r Record) Equals(r2 Record) bool {
 //or continues using one that is there if it exists.
 //signature is the private key to sign with
 //and rand is the source of randomness for the bytes.
-func Open(filename string, signature crypto.Signer, rand io.Reader) (rdb RDB, err error) {
+func Open(filename string, signer crypto.Signer, rand io.Reader) (rdb RDB, err error) {
 	rdb.reader = rand
-	rdb.signer = signature
+	rdb.signer = signer
+	b, _ := x509.MarshalPKIXPublicKey(signer.Public())
+	rdb.EncodedPublicKey = base64.StdEncoding.EncodeToString(b)
 	// check if database file exists, otherwise make one
 	if filename != ":memory:" {
 		if _, err = os.Stat(filename); err != nil && os.IsNotExist(err) {
@@ -186,20 +192,21 @@ func (rdb RDB) New() (r Record, err error) {
 	r0, err = rdb.Latest()
 	var s [32]byte
 	if err == sql.ErrNoRows {
-		s = sha256.Sum256([]byte(base64.StdEncoding.EncodeToString(r.Bits)))
+		s = sha256.Sum256([]byte(rdb.EncodedPublicKey +
+			base64.StdEncoding.EncodeToString(r.Bits)))
 	} else {
-		s = sha256.Sum256([]byte(base64.StdEncoding.EncodeToString(r0.Hash) +
-			hex.EncodeToString(r.Bits)))
+		s = sha256.Sum256([]byte(base64.StdEncoding.EncodeToString(r0.Bits) +
+			base64.StdEncoding.EncodeToString(r.Bits)))
 	}
-	r.Hash = make([]byte, 32)
+	r.Hash = make([]byte, len(s))
 	for i := 0; i < len(s); i++ {
 		r.Hash[i] = s[i]
 	}
 	//note the time
 	r.Time = time.Now().Unix()
-	//sign the generated bits and hash
-	//#TODO should this use rdb.Reader?
-	r.Signature, err = rdb.signer.Sign(rand.Reader, append(r.Bits, r.Hash...), nil)
+	//sign the generated bits and hash together
+	r.Signature, err = rdb.signer.Sign(
+		rand.Reader, append(r.Bits, r.Hash...), nil)
 	if err != nil {
 		return
 	}

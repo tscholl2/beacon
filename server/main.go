@@ -6,20 +6,22 @@ import (
 	"crypto/sha512"
 	"encoding/json"
 	"errors"
+	"flag"
+	"fmt"
 	"hash"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/cocoonlife/goalsa"
-	"github.com/tscholl2/beacon/rdb"
+	"github.com/tscholl2/beacon"
 	"github.com/zenazn/goji"
 	"github.com/zenazn/goji/web"
 	"github.com/zenazn/goji/web/middleware"
 )
 
 var (
-	records rdb.RDB
+	records beacon.RDB
 	key     ecdsa.PrivateKey
 )
 
@@ -84,18 +86,27 @@ func init() {
 	//#TODO read in key from file
 	//#TODO think of a better way to hash from a key to a curve
 	//maybe also use custom curve generator?
-	key, err := ecdsa.GenerateKey(elliptic.P256(), newStupidReader(key))
+	var s string
+	flag.StringVar(&s, "secret", "", "String used to generate a private key. Must not be ''.")
+	flag.Parse()
+	if s == "" {
+		panic(errors.New("'secret' argument must not be ''. Run with -help"))
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), newStupidReader(s))
 	if err != nil {
 		panic(err)
 	}
-	records, err = rdb.Open("./test.db", key, new(mic))
+	records, err = beacon.Open("./test.db", key, new(mic))
 	if err != nil {
 		panic(err)
 	}
 	go func() {
 		for {
-			records.New()
-			time.Sleep(10 * time.Second)
+			_, err := records.New()
+			if err != nil {
+				fmt.Errorf("Error making record: %s", err)
+			}
+			time.Sleep(60 * time.Second)
 		}
 	}()
 }
@@ -108,12 +119,13 @@ func headers(h http.Handler) http.Handler {
 	})
 }
 
-func send(rec rdb.Record, err error, w http.ResponseWriter) {
+func send(rec beacon.Record, err error, w http.ResponseWriter) {
 	//if record.Time not set then assume none found
 	if rec.Time == 0 && err != nil {
 		err = errors.New("No record found.")
 	}
 	if err != nil {
+		fmt.Errorf("Error getting record: %s", err)
 		b, _ := json.Marshal(struct {
 			E string `json:"error"`
 		}{err.Error()})
@@ -121,7 +133,7 @@ func send(rec rdb.Record, err error, w http.ResponseWriter) {
 		return
 	}
 	b, _ := json.Marshal(struct {
-		R rdb.Record `json:"record"`
+		R beacon.Record `json:"record"`
 	}{rec})
 	w.Write(b)
 	return
@@ -136,7 +148,7 @@ func getLatest(w http.ResponseWriter, r *http.Request) {
 func getID(c web.C, w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(c.URLParams["id"], 10, 64)
 	if err != nil || id == 0 {
-		send(rdb.Record{}, err, w)
+		send(beacon.Record{}, err, w)
 		return
 	}
 	rec, err := records.Select(id)
@@ -147,7 +159,7 @@ func getID(c web.C, w http.ResponseWriter, r *http.Request) {
 func getBefore(c web.C, w http.ResponseWriter, r *http.Request) {
 	t, err := strconv.ParseInt(c.URLParams["time"], 10, 64)
 	if err != nil {
-		send(rdb.Record{}, err, w)
+		send(beacon.Record{}, err, w)
 		return
 	}
 	rec, err := records.Before(t)
@@ -158,7 +170,7 @@ func getBefore(c web.C, w http.ResponseWriter, r *http.Request) {
 func getAfter(c web.C, w http.ResponseWriter, r *http.Request) {
 	t, err := strconv.ParseInt(c.URLParams["time"], 10, 64)
 	if err != nil {
-		send(rdb.Record{}, err, w)
+		send(beacon.Record{}, err, w)
 		return
 	}
 	rec, err := records.After(t)
@@ -167,20 +179,14 @@ func getAfter(c web.C, w http.ResponseWriter, r *http.Request) {
 }
 
 func getKey(w http.ResponseWriter, r *http.Request) {
-	err, b := MarshalPKIXPublicKey(key.Public())
-	if err != nil {
-		send(rdb.Record{}, err, w)
-		return
-	}
 	b, _ := json.Marshal(struct {
 		K string `json:"key"`
-	}{string(b)})
+	}{records.EncodedPublicKey})
 	w.Write(b)
 	return
 }
 
 func main() {
-	defer records.Close()           //#TODO this doesn't get run? how to handle exit?
 	goji.Abandon(middleware.Logger) //comment out to see log
 	goji.Use(headers)
 	goji.Get("/", getLatest)
