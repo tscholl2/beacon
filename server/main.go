@@ -17,12 +17,12 @@ import (
 	"github.com/tscholl2/beacon"
 	"github.com/zenazn/goji"
 	"github.com/zenazn/goji/web"
-	"github.com/zenazn/goji/web/middleware"
 )
 
 var (
-	records beacon.RDB
-	key     ecdsa.PrivateKey
+	records  beacon.RDB
+	key      ecdsa.PrivateKey
+	rawAudio []byte
 )
 
 type mic struct{}
@@ -53,6 +53,7 @@ func (*mic) Read(p []byte) (n int, err error) {
 	for n = 0; n < min(len(b1), len(p)); n++ {
 		p[n] = c[n]
 	}
+	rawAudio = b2
 	return
 }
 
@@ -186,10 +187,18 @@ func getKey(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
+func getRaw(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Disposition", "attachment; filename=raw.wav")
+	w.Header().Set("Content-Type", "audio/basic")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(rawAudio)))
+	w.Write(rawAudio)
+	return
+}
+
 func main() {
-	goji.Abandon(middleware.Logger) //comment out to see log
 	goji.Use(headers)
 	goji.Get("/", getLatest)
+	goji.Get("/raw", getRaw)
 	goji.Get("/key", getKey)
 	goji.Get("/:id", getID)
 	goji.Get("/before/:time", getBefore)
