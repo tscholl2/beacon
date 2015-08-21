@@ -188,10 +188,19 @@ func getKey(w http.ResponseWriter, r *http.Request) {
 }
 
 func getRaw(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Disposition", "attachment; filename=raw.wav")
-	w.Header().Set("Content-Type", "audio/basic")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"raw.wav\"")
+	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(rawAudio)))
 	w.Write(rawAudio)
+	return
+}
+
+func getAudio(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Disposition", "attachment; filename=\"raw.wav\"")
+	w.Header().Set("Content-Type", "audio/basic")
+	h := []byte{82, 73, 70, 70, 100, 31, 0, 0, 87, 65, 86, 69, 102, 109, 116, 32, 16, 0, 0, 0, 1, 0, 1, 0, 64, 31, 0, 0, 64, 31, 0, 0, 1, 0, 8, 0, 100, 97, 116, 97, 64, 31, 0, 0}
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(h)+len(rawAudio)))
+	w.Write(append(h, rawAudio...))
 	return
 }
 
@@ -199,6 +208,7 @@ func main() {
 	goji.Use(headers)
 	goji.Get("/", getLatest)
 	goji.Get("/raw", getRaw)
+	goji.Get("/audio", getAudio)
 	goji.Get("/key", getKey)
 	goji.Get("/:id", getID)
 	goji.Get("/before/:time", getBefore)
