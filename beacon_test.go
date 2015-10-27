@@ -1,135 +1,154 @@
 package beacon
 
 import (
+	"crypto"
 	"crypto/ecdsa"
-	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
+	"io"
+	"math/rand"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 )
 
 var (
-	key *ecdsa.PrivateKey
-	//Sample key generated with
-	//http://play.golang.org/p/SYdIwEX5oj
-	encodedPublicKey  = `ME4wEAYHKoZIzj0CAQYFK4EEACEDOgAEFNgW4fuywiBcE2GrOAmcjydUCi/YZ1hhT066ReC2sEaPI+NCi7tAPYnJCM4tHQjfgqwPYMVjvMg=`
-	encodedPrivateKey = `MGgCAQEEHGVPTAPaVNX4YmbVyfTYW8FWJMpZCo2R9HChDH6gBwYFK4EEACGhPAM6AAQU2Bbh+7LCIFwTYas4CZyPJ1QKL9hnWGFPTrpF4LawRo8j40KLu0A9ickIzi0dCN+CrA9gxWO8yA==`
+	signer *testSigner
+	reader *testReader
+	bitGen *testReader
 )
 
 func init() {
-	b, _ := base64.StdEncoding.DecodeString(encodedPrivateKey)
-	key, _ = x509.ParseECPrivateKey(b)
+	// Sample key generated with
+	// http://play.golang.org/p/SYdIwEX5oj
+	buf, _ := base64.StdEncoding.DecodeString(`MGgCAQEEHGVPTAPaVNX4YmbVyfTYW8FWJMpZCo2R9HChDH6gBwYFK4EEACGhPAM6AAQU2Bbh+7LCIFwTYas4CZyPJ1QKL9hnWGFPTrpF4LawRo8j40KLu0A9ickIzi0dCN+CrA9gxWO8yA==`)
+	key, _ := x509.ParseECPrivateKey(buf)
+	reader = &testReader{rand.NewSource(123)}
+	signer = &testSigner{key}
 }
 
-func TestPublic(t *testing.T) {
-	rdb, err := Open(":memory:", key, rand.Reader)
+func openTestDB() RecordStore {
+	var rs recordStore
+	err := rs.Open("test.db", signer)
 	if err != nil {
-		t.Errorf("Err initializing:\n\t%s", err)
+		panic(err)
 	}
-	defer rdb.Close()
-	if rdb.EncodedPublicKey != encodedPublicKey {
-		t.Errorf(
-			"Public key doesnt match. Want:\n%s\nGot:\n%s\n",
-			encodedPublicKey,
-			rdb.EncodedPublicKey,
-		)
-	}
+	return &rs
 }
 
-func TestInitialize(t *testing.T) {
-	fn := ".hiddentestingdatabasefile"
-	rdb, err := Open(fn, key, rand.Reader)
+func closeTestDB(rs RecordStore) {
+	err := rs.Close()
 	if err != nil {
-		t.Errorf("Err initializing1:\n\t%s", err)
+		panic(err)
 	}
-	_, err = rdb.New()
-	if err != nil {
-		t.Errorf("Err inserting new:\n\t%s", err)
-	}
-	err = rdb.Close()
-	if err != nil {
-		t.Errorf("Err closing rdb1:\n\t%s", err)
-	}
-	//open again to make sure it worked and saved
-	rdb, err = Open(fn, key, rand.Reader)
-	if err != nil {
-		t.Errorf("Err initializing2:\n\t%s", err)
-	}
-	r, err := rdb.Latest()
-	if err != nil {
-		t.Errorf("Err reading value:\n\t%s", err)
-	}
-	if r.ID != 1 {
-		t.Errorf("Err reading value: record not 1")
-	}
-	err = rdb.Close()
-	if err != nil {
-		t.Errorf("Err closing rdb2:\n\t%s", err)
-	}
-	//clean up
-	err = os.Remove(fn)
-	if err != nil {
-		t.Errorf("Err removing database file, please remove './%s' manually.", fn)
+	os.Remove("test.db")
+}
+
+func TestFirst(t *testing.T) {
+	rs := openTestDB()
+	defer closeTestDB(rs)
+	_, err := rs.Latest()
+	if err != ErrNoRecords {
+		t.Errorf("unexpected error\n%s", err)
 	}
 }
 
-func TestOpen(t *testing.T) {
-	rdb, err := Open(":memory:", key, rand.Reader)
-	if err != nil {
-		t.Errorf("Err initializing:\n\t%s", err)
-	}
-	defer rdb.Close()
-	for i := 0; i < 10; i++ {
-		_, err := rdb.New()
+func TestNew(t *testing.T) {
+	rs := openTestDB()
+	defer closeTestDB(rs)
+	for i := 0; i < 3; i++ {
+		b := newBitGenerator()()
+		r, err := rs.New(b)
 		if err != nil {
-			t.Errorf("Err generating record:\n\t%s", err)
+			t.Errorf("unexpected error\n%s", err)
+		}
+		if r.Bits != b {
+			t.Errorf("expected %x got %x", b, r.Bits)
+		}
+		r2, err := rs.Latest()
+		if err != nil {
+			t.Errorf("unexpected error\n%s", err)
+		}
+		if !reflect.DeepEqual(r, r2) {
+			t.Errorf("expected %+v got %+v", r, r2)
 		}
 	}
 }
 
-func TestSelects(t *testing.T) {
-	rdb, err := Open(":memory:", key, rand.Reader)
-	if err != nil {
-		t.Errorf("Err initializing:\n\t%s", err)
-	}
-	defer rdb.Close()
-	R := make([]Record, 3)
-	for i := 0; i < len(R); i++ {
-		R[i], err = rdb.New()
-		time.Sleep(time.Second)
-		if err != nil {
-			t.Errorf("Err generating record:\n\t%s", err)
-		}
+func TestSearch(t *testing.T) {
+	rs := openTestDB()
+	defer closeTestDB(rs)
+	bg := newBitGenerator()
+	records := make([]Record, 3)
+	times := make([]time.Time, 3)
+	for i := 0; i < 3; i++ {
+		times[i] = time.Now()
+		time.Sleep(time.Millisecond)
+		records[i], _ = rs.New(bg())
 	}
 	var r Record
-	r, err = rdb.Latest()
+	var err error
+	r, err = rs.After(times[0])
 	if err != nil {
-		t.Errorf("Err on 'latest':\n\t%s", err)
+		t.Errorf("unexpected error\n%s", err)
 	}
-	if !r.Equals(R[len(R)-1]) {
-		t.Errorf("Err on 'latest'. Got:\n\t%+v\nWant:\n\t%+v", r, R[len(R)-1])
+	if !reflect.DeepEqual(records[0], r) {
+		t.Errorf("expected %+v got %+v", records[0], r)
 	}
-	r, err = rdb.Select(3)
+	r, err = rs.After(times[2].Add(time.Second))
+	if err != ErrNoRecords {
+		t.Errorf("unexpected error\n%s", err)
+	}
+	r, err = rs.Before(times[2])
 	if err != nil {
-		t.Errorf("Err on 'select':\n\t%s", err)
+		t.Errorf("unexpected error\n%s", err)
 	}
-	if err != nil {
-		t.Errorf("Err on 'select'. Got:\n\t%+v\nWant:\n\t%+v", r, R[2])
+	if !reflect.DeepEqual(records[1], r) {
+		t.Errorf("expected %+v got %+v", records[1], r)
 	}
-	r, err = rdb.After(R[2].Time)
-	if err != nil {
-		t.Errorf("Err on 'after':\n\t%s", err)
+	_, err = rs.Before(times[0])
+	if err != ErrNoRecords {
+		t.Errorf("unexpected error\n%s", err)
 	}
-	if !r.Equals(R[2]) {
-		t.Errorf("Err on 'after'. Got:\n\t%+v\nWant:\n\t%+v", r, R[2])
+}
+
+/*
+	utilities for deterministic tests
+*/
+
+// returns a function which generates bits
+// randomly but with a set seed.
+func newBitGenerator() func() [32]byte {
+	reader := testReader{rand.NewSource(100)}
+	return func() [32]byte {
+		var bits [32]byte
+		reader.Read(bits[:])
+		return bits
 	}
-	r, err = rdb.Before(R[1].Time)
-	if err != nil {
-		t.Errorf("Err on 'before':\n\t%s", err)
+}
+
+// testSigner uses custom random source
+type testSigner struct {
+	key *ecdsa.PrivateKey
+}
+
+func (s *testSigner) Public() crypto.PublicKey {
+	return s.key.Public()
+}
+func (s *testSigner) Sign(rand io.Reader, msg []byte, opts crypto.SignerOpts) (signature []byte, err error) {
+	return s.key.Sign(reader, msg, opts)
+}
+
+// testReader reads from a random source
+// whose seed is set above
+type testReader struct {
+	source rand.Source
+}
+
+func (r *testReader) Read(p []byte) (n int, err error) {
+	for i := 0; i < len(p); i++ {
+		p[i] = byte(r.source.Int63())
 	}
-	if !r.Equals(R[1]) {
-		t.Errorf("Err on 'before'. Got:\n\t%+v\nWant:\n\t%+v", r, R[1])
-	}
+	return len(p), nil
 }
