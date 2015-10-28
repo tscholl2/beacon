@@ -34,7 +34,7 @@ func (rs *recordStore) Open(filename string, signer crypto.Signer) (err error) {
 		return
 	}
 	return rs.db.Update(func(tx *bolt.Tx) error {
-		_, err := tx.CreateBucket(recordBucket)
+		_, err := tx.CreateBucketIfNotExists(recordBucket)
 		return err
 	})
 }

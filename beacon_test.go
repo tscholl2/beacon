@@ -45,6 +45,13 @@ func closeTestDB(rs RecordStore) {
 	os.Remove("test.db")
 }
 
+func TestOpen(t *testing.T) {
+	rs := openTestDB()
+	rs.Close()
+	rs.Open("test.db", signer)
+	closeTestDB(rs)
+}
+
 func TestFirst(t *testing.T) {
 	rs := openTestDB()
 	defer closeTestDB(rs)
