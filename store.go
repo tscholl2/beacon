@@ -23,6 +23,10 @@ type recordStore struct {
 	signer crypto.Signer
 }
 
+func NewStore() RecordStore {
+	return &recordStore{}
+}
+
 func (rs *recordStore) Open(filename string, signer crypto.Signer) (err error) {
 	rs.signer = signer
 	rs.db, err = bolt.Open(filename, 0666, nil)
