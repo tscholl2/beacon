@@ -1,4 +1,4 @@
-package main
+package mic
 
 import (
 	"crypto/sha512"
@@ -6,8 +6,11 @@ import (
 	"github.com/cocoonlife/goalsa"
 )
 
-type mic struct {
-	lastSample [8000]byte
+// Reader is a microphone Reader
+// which implements the reader
+// interface.
+type Reader struct {
+	LastSample [8000]byte
 }
 
 func min(a int, b int) int {
@@ -17,7 +20,7 @@ func min(a int, b int) int {
 	return b
 }
 
-func (m *mic) Read(p []byte) (n int, err error) {
+func (m *Reader) Read(p []byte) (n int, err error) {
 	dev, err := alsa.NewCaptureDevice("default", 1, alsa.FormatU8, 8000, alsa.BufferParams{})
 	if err != nil {
 		return
@@ -36,6 +39,6 @@ func (m *mic) Read(p []byte) (n int, err error) {
 	for n = 0; n < min(len(b1), len(p)); n++ {
 		p[n] = c[n]
 	}
-	m.lastSample = b2
+	m.LastSample = b2
 	return
 }

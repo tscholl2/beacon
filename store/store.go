@@ -1,4 +1,4 @@
-package beacon
+package store
 
 import (
 	"bytes"
@@ -23,6 +23,8 @@ type recordStore struct {
 	signer crypto.Signer
 }
 
+// NewStore returns something which
+// implements the store interface.
 func NewStore() RecordStore {
 	return &recordStore{}
 }

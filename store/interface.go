@@ -1,4 +1,4 @@
-package beacon
+package store
 
 import (
 	"crypto"
@@ -29,11 +29,17 @@ type Record struct {
 func (r Record) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		I uint64    `json:"id"`
-		B string    `json:"bits"`
 		T time.Time `json:"time"`
+		B string    `json:"bits"`
 		H string    `json:"hash"`
 		S string    `json:"signature"`
-	}{r.ID, base64.StdEncoding.EncodeToString(r.Bits[:]), r.Time, base64.StdEncoding.EncodeToString(r.Hash[:]), base64.StdEncoding.EncodeToString(r.Signature[:])})
+	}{
+		r.ID,
+		r.Time,
+		base64.StdEncoding.EncodeToString(r.Bits[:]),
+		base64.StdEncoding.EncodeToString(r.Hash[:]),
+		base64.StdEncoding.EncodeToString(r.Signature[:]),
+	})
 }
 
 // RecordStore is the store to access
