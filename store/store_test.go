@@ -5,12 +5,16 @@ import (
 	"crypto/ecdsa"
 	"crypto/x509"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"math/rand"
 	"os"
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -28,96 +32,69 @@ func init() {
 	signer = &testSigner{key}
 }
 
-func openTestDB() RecordStore {
+func openTestDB(t *testing.T) RecordStore {
 	var rs recordStore
-	err := rs.Open("test.db", signer)
-	if err != nil {
-		panic(err)
-	}
+	require.Nil(t, rs.Open("test.db", signer))
 	return &rs
 }
 
-func closeTestDB(rs RecordStore) {
-	err := rs.Close()
-	if err != nil {
-		panic(err)
-	}
+func closeTestDB(t *testing.T, rs RecordStore) {
+	require.Nil(t, rs.Close())
 	os.Remove("test.db")
 }
 
 func TestOpen(t *testing.T) {
-	rs := openTestDB()
+	rs := openTestDB(t)
 	rs.Close()
 	rs.Open("test.db", signer)
-	closeTestDB(rs)
+	closeTestDB(t, rs)
 }
 
 func TestFirst(t *testing.T) {
-	rs := openTestDB()
-	defer closeTestDB(rs)
+	rs := openTestDB(t)
+	defer closeTestDB(t, rs)
 	_, err := rs.Latest()
-	if err != ErrNoRecords {
-		t.Errorf("unexpected error\n%s", err)
-	}
+	assert.Equal(t, err, ErrNoRecords)
 }
 
 func TestNew(t *testing.T) {
-	rs := openTestDB()
-	defer closeTestDB(rs)
+	rs := openTestDB(t)
+	defer closeTestDB(t, rs)
 	for i := 0; i < 3; i++ {
 		b := newBitGenerator()()
 		r, err := rs.New(b)
-		if err != nil {
-			t.Errorf("unexpected error\n%s", err)
-		}
-		if r.Bits != b {
-			t.Errorf("expected %x got %x", b, r.Bits)
-		}
+		assert.Nil(t, err)
+		assert.Equal(t, r.Bits, b)
 		r2, err := rs.Latest()
-		if err != nil {
-			t.Errorf("unexpected error\n%s", err)
-		}
-		if !reflect.DeepEqual(r, r2) {
-			t.Errorf("expected %+v got %+v", r, r2)
-		}
+		assert.Nil(t, err)
+		assert.True(t, reflect.DeepEqual(r, r2), fmt.Sprintf("args:\nr1=%+v\nr2=%+v", r, r2))
 	}
 }
 
 func TestSearch(t *testing.T) {
-	rs := openTestDB()
-	defer closeTestDB(rs)
+	rs := openTestDB(t)
+	defer closeTestDB(t, rs)
 	bg := newBitGenerator()
 	records := make([]Record, 3)
 	times := make([]time.Time, 3)
-	for i := 0; i < 3; i++ {
+	var err error
+	for i := 0; i < len(times); i++ {
 		times[i] = time.Now()
 		time.Sleep(time.Millisecond)
-		records[i], _ = rs.New(bg())
+		records[i], err = rs.New(bg())
+		require.Nil(t, err)
 	}
 	var r Record
-	var err error
 	r, err = rs.After(times[0])
-	if err != nil {
-		t.Errorf("unexpected error\n%s", err)
-	}
-	if !reflect.DeepEqual(records[0], r) {
-		t.Errorf("expected %+v got %+v", records[0], r)
-	}
-	r, err = rs.After(times[2].Add(time.Second))
-	if err != ErrNoRecords {
-		t.Errorf("unexpected error\n%s", err)
-	}
-	r, err = rs.Before(times[2])
-	if err != nil {
-		t.Errorf("unexpected error\n%s", err)
-	}
-	if !reflect.DeepEqual(records[1], r) {
-		t.Errorf("expected %+v got %+v", records[1], r)
-	}
-	_, err = rs.Before(times[0])
-	if err != ErrNoRecords {
-		t.Errorf("unexpected error\n%s", err)
-	}
+	assert.Nil(t, err)
+	assert.True(t, reflect.DeepEqual(records[0], r))
+	r, err = rs.After(times[len(times)-1].Add(time.Second))
+	assert.Equal(t, err, ErrNoRecords)
+	r, err = rs.Before(times[len(times)-1])
+	assert.Nil(t, err)
+	assert.True(t, reflect.DeepEqual(records[1], r))
+	_, err = rs.Before(times[0].Add(-1 * time.Second))
+	assert.Equal(t, err, ErrNoRecords)
 }
 
 /*
