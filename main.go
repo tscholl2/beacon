@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"time"
 
@@ -24,12 +25,16 @@ var (
 )
 
 func init() {
-	var s string
+	var filename string
 	var err error
-	flag.StringVar(&s, "key", "abc-123",
-		"string used to generate a private key")
+	flag.StringVar(&filename, "file", "key.txt",
+		"file containing secret key")
 	flag.Parse()
-	b := sha512.Sum512([]byte(s))
+	f, err := ioutil.ReadFile(filename)
+	if err != nil {
+		panic(err)
+	}
+	b := sha512.Sum512(f)
 	key, err = ecdsa.GenerateKey(elliptic.P256(), bytes.NewReader(b[:]))
 	if err != nil {
 		panic(err)
